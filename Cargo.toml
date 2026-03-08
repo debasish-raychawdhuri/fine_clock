@@ -1,0 +1,9 @@
+[package]
+name = "fine_clock"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ncurses = { version = "6", features = ["wide"] }
+chrono = "0.4"
+libc = "0.2"

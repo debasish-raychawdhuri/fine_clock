@@ -558,8 +558,8 @@ fn render_analog_retro(size: usize, hour12: f64, minute: f64, second: f64) -> Ve
     for i in 0..12 {
         let a = i as f64 / 12.0 * 2.0 * PI;
         if i % 3 == 0 {
-            let rn = r * 0.74;
-            draw_roman(&mut buf, w, h, numerals[i], cx + rn * a.sin(), cy - rn * a.cos(), size as f64 * 0.10, INK);
+            let rn = r * 0.66;
+            draw_roman(&mut buf, w, h, numerals[i], cx + rn * a.sin(), cy - rn * a.cos(), size as f64 * 0.085, INK);
         } else {
             let outer = rim - size as f64 * 0.02;
             let inner = outer - size as f64 * 0.06;

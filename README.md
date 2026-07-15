@@ -86,8 +86,10 @@ the kitty graphics protocol.
 
 ### Retro + pendulum (`--retro-with-pendulum` / `-P`)
 
-The retro clock with a **swinging pendulum** below it, animated at a high frame
-rate (~60 fps cap; a smoothly sweeping second hand, not a once-a-second tick).
+A cased grandfather-style clock: a wooden hood frames the retro brass dial, and
+a narrower trunk below houses a **swinging brass pendulum** in a dark cavity,
+over a plinth base with feet. The pendulum swings smoothly at a high frame rate
+(~60 fps cap) while the second hand ticks once per second like a real clock.
 Each frame is uploaded off-screen and swapped in via double buffering, so it
 stays flicker-free. A live FPS readout is shown under the clock. Needs a
 kitty-graphics terminal.

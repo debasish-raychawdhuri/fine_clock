@@ -586,34 +586,81 @@ fn render_analog_retro(size: usize, hour12: f64, minute: f64, second: f64) -> Ve
     buf
 }
 
-/// Retro clock at the top with a swinging pendulum below. `phase` is the
-/// pendulum's angle in radians (driven by a continuous clock for smooth,
-/// high-frame-rate motion, independent of the second hand).
-fn render_retro_pendulum(w: usize, h: usize, hour12: f64, minute: f64, second: f64, phase: f64) -> Vec<u8> {
+fn fill_rect(buf: &mut [u8], w: usize, h: usize, x: f64, y: f64, rw: f64, rh: f64, c: (u8, u8, u8, u8)) {
+    let x0 = x.floor().max(0.0) as i32;
+    let y0 = y.floor().max(0.0) as i32;
+    let x1 = (x + rw).ceil().min(w as f64) as i32;
+    let y1 = (y + rh).ceil().min(h as f64) as i32;
+    let mut yy = y0;
+    while yy < y1 {
+        let mut xx = x0;
+        while xx < x1 {
+            put(buf, w, h, xx, yy, c);
+            xx += 1;
+        }
+        yy += 1;
+    }
+}
+
+const WOOD: (u8, u8, u8, u8) = (99, 62, 31, 255);
+const WOOD_HI: (u8, u8, u8, u8) = (142, 94, 54, 255);
+const WOOD_DK: (u8, u8, u8, u8) = (64, 39, 19, 255);
+const CAVITY: (u8, u8, u8, u8) = (26, 18, 12, 255);
+
+/// A cased grandfather-style clock: a wooden hood framing the retro dial, a
+/// narrower trunk below housing the swinging pendulum, and a plinth base.
+/// `phase` is the pendulum angle (radians from vertical); `second` should be a
+/// whole second so the second hand ticks.
+fn render_pendulum_clock(w: usize, h: usize, hour12: f64, minute: f64, second: f64, phase: f64) -> Vec<u8> {
     let mut buf = vec![0u8; w * h * 4];
-    let cx = w as f64 / 2.0 - 0.5;
-    let r = w as f64 / 2.0 - 2.0;
-    let cy = r + 2.0; // clock in the top square
+    let wf = w as f64;
+    let hf = h as f64;
 
-    // Pendulum first (behind the case): pivot just under the bezel.
-    let pivot_x = cx;
-    let pivot_y = cy + r * 0.55;
-    let rod_len = (h as f64 - pivot_y) - w as f64 * 0.10;
-    let theta = phase; // radians from vertical
-    let bx = pivot_x + rod_len * theta.sin();
-    let by = pivot_y + rod_len * theta.cos();
-    // Suspension spring/rod.
-    stroke_seg(&mut buf, w, h, pivot_x, pivot_y, bx, by, (w as f64 * 0.012).max(2.0), BRASS);
-    // Bob: brass disk with a darker rim and a highlight.
-    let bob = w as f64 * 0.085;
+    let hood_h = wf * 0.96;
+    let base_h = wf * 0.14;
+    let trunk_top = hood_h * 0.86; // starts behind the hood
+    let trunk_bot = hf - base_h;
+    let trunk_w = wf * 0.56;
+    let tx0 = (wf - trunk_w) / 2.0;
+
+    // Trunk: wood case → inner frame → dark cavity.
+    fill_rect(&mut buf, w, h, tx0, trunk_top, trunk_w, trunk_bot - trunk_top, WOOD);
+    let i1 = wf * 0.045;
+    fill_rect(&mut buf, w, h, tx0 + i1, trunk_top + i1, trunk_w - 2.0 * i1, (trunk_bot - trunk_top) - 2.0 * i1, WOOD_DK);
+    let i2 = i1 + wf * 0.018;
+    fill_rect(&mut buf, w, h, tx0 + i2, trunk_top + i2, trunk_w - 2.0 * i2, (trunk_bot - trunk_top) - 2.0 * i2, CAVITY);
+
+    // Pendulum, swinging inside the cavity (pivot hidden behind the hood).
+    let pivot_x = wf / 2.0;
+    let pivot_y = trunk_top + wf * 0.03;
+    let rod_len = (trunk_bot - pivot_y) - wf * 0.12;
+    let bx = pivot_x + rod_len * phase.sin();
+    let by = pivot_y + rod_len * phase.cos();
+    stroke_seg(&mut buf, w, h, pivot_x, pivot_y, bx, by, (wf * 0.011).max(2.0), BRASS);
+    let bob = wf * 0.072;
     fill_disk(&mut buf, w, h, bx, by, bob, BRONZE);
-    fill_disk(&mut buf, w, h, bx, by, bob - w as f64 * 0.012, BRASS);
+    fill_disk(&mut buf, w, h, bx, by, bob - wf * 0.011, BRASS);
     fill_disk(&mut buf, w, h, bx - bob * 0.3, by - bob * 0.3, bob * 0.28, (232, 200, 140, 255));
-    // Pivot cap.
-    fill_disk(&mut buf, w, h, pivot_x, pivot_y, w as f64 * 0.02, BRONZE);
 
-    // Clock face on top.
-    draw_retro_face(&mut buf, w, h, cx, cy, r, hour12, minute, second);
+    // Base plinth (wider), with a molding strip and small feet.
+    let base_w = wf * 0.88;
+    let bx0 = (wf - base_w) / 2.0;
+    fill_rect(&mut buf, w, h, bx0, trunk_bot, base_w, base_h, WOOD);
+    fill_rect(&mut buf, w, h, bx0, trunk_bot, base_w, wf * 0.02, WOOD_HI);
+    fill_rect(&mut buf, w, h, bx0 + wf * 0.02, hf - wf * 0.03, wf * 0.12, wf * 0.03, WOOD_DK);
+    fill_rect(&mut buf, w, h, bx0 + base_w - wf * 0.14, hf - wf * 0.03, wf * 0.12, wf * 0.03, WOOD_DK);
+
+    // Hood: full-width wood over the trunk top and pivot, with a bottom molding.
+    fill_rect(&mut buf, w, h, 0.0, 0.0, wf, hood_h, WOOD);
+    fill_rect(&mut buf, w, h, 0.0, hood_h - wf * 0.03, wf, wf * 0.03, WOOD_HI);
+
+    // Dial: a wooden frame ring, then the brass/cream face.
+    let dcx = wf / 2.0 - 0.5;
+    let dcy = hood_h * 0.5;
+    let r_wood = hood_h * 0.47;
+    fill_disk(&mut buf, w, h, dcx, dcy, r_wood, WOOD_DK);
+    fill_disk(&mut buf, w, h, dcx, dcy, r_wood - wf * 0.018, WOOD_HI);
+    draw_retro_face(&mut buf, w, h, dcx, dcy, r_wood - wf * 0.04, hour12, minute, second);
     buf
 }
 
@@ -755,8 +802,8 @@ fn run_pendulum() {
     // The image is ~1.75x taller than wide (clock + pendulum). Cap the width so
     // per-frame transmission stays light enough for a high frame rate.
     let usable_h = avail_h.saturating_sub(2 * cell_h);
-    let w = avail_w.min((usable_h as f64 / 1.75) as usize).min(360).max(80);
-    let h = (w as f64 * 1.75) as usize;
+    let w = avail_w.min((usable_h as f64 / 1.95) as usize).min(320).max(80);
+    let h = (w as f64 * 1.95) as usize;
     let img_cols = w.div_ceil(cell_w);
     let img_rows = h.div_ceil(cell_h);
     let col0 = ((cols as usize).saturating_sub(img_cols)) / 2 + 1;
@@ -782,10 +829,10 @@ fn run_pendulum() {
 
         let t = start.elapsed().as_secs_f64();
         let now = Local::now();
-        // Seconds-pendulum: full swing every 2s, ~16 deg amplitude.
-        let theta = 0.28 * (2.0 * PI * t / 2.0).cos();
-        let sec_f = now.second() as f64 + now.nanosecond() as f64 / 1e9;
-        let rgba = render_retro_pendulum(w, h, (now.hour() % 12) as f64, now.minute() as f64, sec_f, theta);
+        // Pendulum swings smoothly (full swing every 2s, ~9 deg amplitude); the
+        // second hand ticks once per second like a normal clock.
+        let theta = 0.15 * (2.0 * PI * t / 2.0).cos();
+        let rgba = render_pendulum_clock(w, h, (now.hour() % 12) as f64, now.minute() as f64, now.second() as f64, theta);
 
         let next_id = if cur_id == 1 { 2 } else { 1 };
         kitty_upload(&mut out, &rgba, w, h, next_id);

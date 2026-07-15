@@ -541,11 +541,15 @@ fn draw_retro_face(buf: &mut [u8], w: usize, h: usize, cx: f64, cy: f64, r: f64,
     // Minute track.
     let rim = r - d * 0.05;
     for i in 0..60 {
-        if i % 5 == 0 {
+        // Skip the eight non-cardinal hour positions (they carry bold batons),
+        // but keep the four cardinals (12/3/6/9) so the rim isn't gapped under
+        // the Roman numerals — drawn thicker, same length, as an accent.
+        if i % 5 == 0 && i % 15 != 0 {
             continue;
         }
         let a = i as f64 / 60.0 * 2.0 * PI;
-        stroke_seg(buf, w, h, cx + (rim - d * 0.02) * a.sin(), cy - (rim - d * 0.02) * a.cos(), cx + rim * a.sin(), cy - rim * a.cos(), (d * 0.006).max(1.0), INK);
+        let th = if i % 15 == 0 { (d * 0.014).max(1.5) } else { (d * 0.006).max(1.0) };
+        stroke_seg(buf, w, h, cx + (rim - d * 0.02) * a.sin(), cy - (rim - d * 0.02) * a.cos(), cx + rim * a.sin(), cy - rim * a.cos(), th, INK);
     }
 
     // Hours: Roman numerals at the cardinals, bold batons elsewhere.

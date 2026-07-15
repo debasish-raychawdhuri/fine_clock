@@ -84,6 +84,14 @@ double-bezel, Roman numerals at the cardinals with bold baton markers elsewhere,
 tapered black hands, and a red second hand with a counterweight. Also drawn with
 the kitty graphics protocol.
 
+### Retro + pendulum (`--retro-with-pendulum` / `-P`)
+
+The retro clock with a **swinging pendulum** below it, animated at a high frame
+rate (~60 fps cap; a smoothly sweeping second hand, not a once-a-second tick).
+Each frame is uploaded off-screen and swapped in via double buffering, so it
+stays flicker-free. A live FPS readout is shown under the clock. Needs a
+kitty-graphics terminal.
+
 ## Dependencies
 
 - Rust (1.85+, edition 2024)

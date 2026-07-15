@@ -519,38 +519,33 @@ fn draw_roman(buf: &mut [u8], w: usize, h: usize, s: &[u8], ccx: f64, ccy: f64, 
     }
 }
 
-/// Retro variant: warm ivory dial, brass double-bezel, black baton markers,
-/// Roman numerals at the cardinals, tapered hands, and a red second hand with
-/// a counterweight.
-fn render_analog_retro(size: usize, hour12: f64, minute: f64, second: f64) -> Vec<u8> {
-    let (w, h) = (size, size);
-    let mut buf = vec![0u8; w * h * 4];
-    let cx = w as f64 / 2.0 - 0.5;
-    let cy = h as f64 / 2.0 - 0.5;
-    let r = size as f64 / 2.0 - 2.0;
+const BRONZE: (u8, u8, u8, u8) = (94, 66, 28, 255);
+const BRASS: (u8, u8, u8, u8) = (198, 152, 74, 255);
+const CREAM: (u8, u8, u8, u8) = (238, 229, 203, 255);
+const INK: (u8, u8, u8, u8) = (34, 28, 22, 255);
+const VINTAGE_RED: (u8, u8, u8, u8) = (168, 44, 32, 255);
 
-    const BRONZE: (u8, u8, u8, u8) = (94, 66, 28, 255);
-    const BRASS: (u8, u8, u8, u8) = (198, 152, 74, 255);
-    const CREAM: (u8, u8, u8, u8) = (238, 229, 203, 255);
-    const INK: (u8, u8, u8, u8) = (34, 28, 22, 255);
-    const VINTAGE_RED: (u8, u8, u8, u8) = (168, 44, 32, 255);
+/// Draw the retro clock face (bezel, dial, markers, Roman numerals, hands, hub)
+/// centered at (cx,cy) with radius r, into an arbitrary-size buffer.
+fn draw_retro_face(buf: &mut [u8], w: usize, h: usize, cx: f64, cy: f64, r: f64, hour12: f64, minute: f64, second: f64) {
+    let d = r * 2.0; // scale base
 
     // Brass double bezel over a cream dial.
-    fill_disk(&mut buf, w, h, cx, cy, r, BRONZE);
-    fill_disk(&mut buf, w, h, cx, cy, r - 2.0, BRASS);
-    fill_disk(&mut buf, w, h, cx, cy, r - size as f64 * 0.035, CREAM);
-    // Aged patina: a couple of faint rings near the rim.
-    stroke_ring(&mut buf, w, h, cx, cy, r - size as f64 * 0.05, 1.0, (150, 130, 95, 90));
-    stroke_ring(&mut buf, w, h, cx, cy, r * 0.30, 1.0, (150, 130, 95, 70));
+    fill_disk(buf, w, h, cx, cy, r, BRONZE);
+    fill_disk(buf, w, h, cx, cy, r - 2.0, BRASS);
+    fill_disk(buf, w, h, cx, cy, r - d * 0.035, CREAM);
+    // Aged patina: a couple of faint rings.
+    stroke_ring(buf, w, h, cx, cy, r - d * 0.05, 1.0, (150, 130, 95, 90));
+    stroke_ring(buf, w, h, cx, cy, r * 0.30, 1.0, (150, 130, 95, 70));
 
     // Minute track.
-    let rim = r - size as f64 * 0.05;
+    let rim = r - d * 0.05;
     for i in 0..60 {
         if i % 5 == 0 {
             continue;
         }
         let a = i as f64 / 60.0 * 2.0 * PI;
-        stroke_seg(&mut buf, w, h, cx + (rim - size as f64 * 0.02) * a.sin(), cy - (rim - size as f64 * 0.02) * a.cos(), cx + rim * a.sin(), cy - rim * a.cos(), (size as f64 * 0.006).max(1.0), INK);
+        stroke_seg(buf, w, h, cx + (rim - d * 0.02) * a.sin(), cy - (rim - d * 0.02) * a.cos(), cx + rim * a.sin(), cy - rim * a.cos(), (d * 0.006).max(1.0), INK);
     }
 
     // Hours: Roman numerals at the cardinals, bold batons elsewhere.
@@ -559,11 +554,11 @@ fn render_analog_retro(size: usize, hour12: f64, minute: f64, second: f64) -> Ve
         let a = i as f64 / 12.0 * 2.0 * PI;
         if i % 3 == 0 {
             let rn = r * 0.66;
-            draw_roman(&mut buf, w, h, numerals[i], cx + rn * a.sin(), cy - rn * a.cos(), size as f64 * 0.085, INK);
+            draw_roman(buf, w, h, numerals[i], cx + rn * a.sin(), cy - rn * a.cos(), d * 0.085, INK);
         } else {
-            let outer = rim - size as f64 * 0.02;
-            let inner = outer - size as f64 * 0.06;
-            stroke_seg(&mut buf, w, h, cx + inner * a.sin(), cy - inner * a.cos(), cx + outer * a.sin(), cy - outer * a.cos(), size as f64 * 0.022, INK);
+            let outer = rim - d * 0.02;
+            let inner = outer - d * 0.06;
+            stroke_seg(buf, w, h, cx + inner * a.sin(), cy - inner * a.cos(), cx + outer * a.sin(), cy - outer * a.cos(), d * 0.022, INK);
         }
     }
 
@@ -571,17 +566,54 @@ fn render_analog_retro(size: usize, hour12: f64, minute: f64, second: f64) -> Ve
     let ha = (hour12 + minute / 60.0) / 12.0 * 2.0 * PI;
     let ma = (minute + second / 60.0) / 60.0 * 2.0 * PI;
     let sa = second / 60.0 * 2.0 * PI;
-    fill_poly(&mut buf, w, h, &hand_poly(cx, cy, ha, r * 0.52, size as f64 * 0.028, size as f64 * 0.06), INK);
-    fill_poly(&mut buf, w, h, &hand_poly(cx, cy, ma, r * 0.76, size as f64 * 0.020, size as f64 * 0.06), INK);
-    // Second hand: thin, with a counterweight tail.
+    fill_poly(buf, w, h, &hand_poly(cx, cy, ha, r * 0.52, d * 0.028, d * 0.06), INK);
+    fill_poly(buf, w, h, &hand_poly(cx, cy, ma, r * 0.76, d * 0.020, d * 0.06), INK);
     let (sdx, sdy) = (sa.sin(), -sa.cos());
-    stroke_seg(&mut buf, w, h, cx - sdx * r * 0.16, cy - sdy * r * 0.16, cx + sdx * r * 0.84, cy + sdy * r * 0.84, (size as f64 * 0.008).max(1.5), VINTAGE_RED);
-    fill_disk(&mut buf, w, h, cx - sdx * r * 0.16, cy - sdy * r * 0.16, size as f64 * 0.02, VINTAGE_RED);
+    stroke_seg(buf, w, h, cx - sdx * r * 0.16, cy - sdy * r * 0.16, cx + sdx * r * 0.84, cy + sdy * r * 0.84, (d * 0.008).max(1.5), VINTAGE_RED);
+    fill_disk(buf, w, h, cx - sdx * r * 0.16, cy - sdy * r * 0.16, d * 0.02, VINTAGE_RED);
 
     // Hub.
-    fill_disk(&mut buf, w, h, cx, cy, size as f64 * 0.028, INK);
-    fill_disk(&mut buf, w, h, cx, cy, size as f64 * 0.012, BRASS);
+    fill_disk(buf, w, h, cx, cy, d * 0.028, INK);
+    fill_disk(buf, w, h, cx, cy, d * 0.012, BRASS);
+}
 
+/// Retro variant: warm ivory dial, brass double-bezel, black baton markers,
+/// Roman numerals at the cardinals, tapered hands, and a red second hand.
+fn render_analog_retro(size: usize, hour12: f64, minute: f64, second: f64) -> Vec<u8> {
+    let (w, h) = (size, size);
+    let mut buf = vec![0u8; w * h * 4];
+    draw_retro_face(&mut buf, w, h, w as f64 / 2.0 - 0.5, h as f64 / 2.0 - 0.5, size as f64 / 2.0 - 2.0, hour12, minute, second);
+    buf
+}
+
+/// Retro clock at the top with a swinging pendulum below. `phase` is the
+/// pendulum's angle in radians (driven by a continuous clock for smooth,
+/// high-frame-rate motion, independent of the second hand).
+fn render_retro_pendulum(w: usize, h: usize, hour12: f64, minute: f64, second: f64, phase: f64) -> Vec<u8> {
+    let mut buf = vec![0u8; w * h * 4];
+    let cx = w as f64 / 2.0 - 0.5;
+    let r = w as f64 / 2.0 - 2.0;
+    let cy = r + 2.0; // clock in the top square
+
+    // Pendulum first (behind the case): pivot just under the bezel.
+    let pivot_x = cx;
+    let pivot_y = cy + r * 0.55;
+    let rod_len = (h as f64 - pivot_y) - w as f64 * 0.10;
+    let theta = phase; // radians from vertical
+    let bx = pivot_x + rod_len * theta.sin();
+    let by = pivot_y + rod_len * theta.cos();
+    // Suspension spring/rod.
+    stroke_seg(&mut buf, w, h, pivot_x, pivot_y, bx, by, (w as f64 * 0.012).max(2.0), BRASS);
+    // Bob: brass disk with a darker rim and a highlight.
+    let bob = w as f64 * 0.085;
+    fill_disk(&mut buf, w, h, bx, by, bob, BRONZE);
+    fill_disk(&mut buf, w, h, bx, by, bob - w as f64 * 0.012, BRASS);
+    fill_disk(&mut buf, w, h, bx - bob * 0.3, by - bob * 0.3, bob * 0.28, (232, 200, 140, 255));
+    // Pivot cap.
+    fill_disk(&mut buf, w, h, pivot_x, pivot_y, w as f64 * 0.02, BRONZE);
+
+    // Clock face on top.
+    draw_retro_face(&mut buf, w, h, cx, cy, r, hour12, minute, second);
     buf
 }
 
@@ -702,7 +734,97 @@ fn run_analog(retro: bool) {
     restore_term(&orig);
 }
 
+/// High-frame-rate retro clock with a swinging pendulum. Redraws every frame
+/// (not once per second) with a smoothly sweeping second hand and pendulum,
+/// double-buffered for flicker-free updates. Shows a live FPS readout.
+fn run_pendulum() {
+    unsafe {
+        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
+    }
+    let orig = set_raw();
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x1b[?1049h\x1b[?25l");
+    let _ = out.flush();
+
+    let (cols, rows, xpix, ypix) = term_size();
+    let avail_w = if xpix > 0 { xpix as usize } else { cols as usize * 10 };
+    let avail_h = if ypix > 0 { ypix as usize } else { rows as usize * 20 };
+    let cell_w = (avail_w / cols.max(1) as usize).max(1);
+    let cell_h = (avail_h / rows.max(1) as usize).max(1);
+    // The image is ~1.75x taller than wide (clock + pendulum). Cap the width so
+    // per-frame transmission stays light enough for a high frame rate.
+    let usable_h = avail_h.saturating_sub(2 * cell_h);
+    let w = avail_w.min((usable_h as f64 / 1.75) as usize).min(360).max(80);
+    let h = (w as f64 * 1.75) as usize;
+    let img_cols = w.div_ceil(cell_w);
+    let img_rows = h.div_ceil(cell_h);
+    let col0 = ((cols as usize).saturating_sub(img_cols)) / 2 + 1;
+    let row0 = 1;
+
+    let start = std::time::Instant::now();
+    let mut last = std::time::Instant::now();
+    let mut fps: f64 = 0.0;
+    let mut cur_id: u32 = 0;
+    let mut in_buf = [0u8; 16];
+    let mut stdin = std::io::stdin();
+
+    // Cap at ~60 fps so we don't spin pointlessly on a fast terminal.
+    let frame_target = std::time::Duration::from_micros(16_666);
+
+    while RUNNING.load(Ordering::SeqCst) {
+        let frame_start = std::time::Instant::now();
+        if let Ok(n) = stdin.read(&mut in_buf) {
+            if in_buf[..n].iter().any(|&b| b == b'q' || b == b'Q' || b == 0x03) {
+                break;
+            }
+        }
+
+        let t = start.elapsed().as_secs_f64();
+        let now = Local::now();
+        // Seconds-pendulum: full swing every 2s, ~16 deg amplitude.
+        let theta = 0.28 * (2.0 * PI * t / 2.0).cos();
+        let sec_f = now.second() as f64 + now.nanosecond() as f64 / 1e9;
+        let rgba = render_retro_pendulum(w, h, (now.hour() % 12) as f64, now.minute() as f64, sec_f, theta);
+
+        let next_id = if cur_id == 1 { 2 } else { 1 };
+        kitty_upload(&mut out, &rgba, w, h, next_id);
+        let _ = write!(out, "\x1b[{};{}H", row0, col0);
+        kitty_put(&mut out, next_id);
+        if cur_id != 0 {
+            kitty_delete(&mut out, cur_id);
+        }
+        cur_id = next_id;
+
+        let caption = format!("{}    {:.0} fps", now.format("%H:%M:%S"), fps);
+        let cap_col = ((cols as usize).saturating_sub(caption.chars().count())) / 2 + 1;
+        let cap_row = row0 + img_rows + 1;
+        let _ = write!(out, "\x1b[{};1H\x1b[2K\x1b[{};{}H\x1b[38;2;198;152;74m{}\x1b[0m", cap_row, cap_row, cap_col, caption);
+        let _ = out.flush();
+
+        let el = frame_start.elapsed();
+        if el < frame_target {
+            std::thread::sleep(frame_target - el);
+        }
+
+        let dt = last.elapsed().as_secs_f64();
+        last = std::time::Instant::now();
+        if dt > 0.0 {
+            let inst = 1.0 / dt;
+            fps = if fps == 0.0 { inst } else { 0.9 * fps + 0.1 * inst };
+        }
+    }
+
+    let _ = out.write_all(b"\x1b_Ga=d,d=A\x1b\\\x1b[?25h\x1b[?1049l");
+    let _ = out.flush();
+    restore_term(&orig);
+}
+
 fn main() {
+    if env::args().any(|a| a == "--retro-with-pendulum" || a == "-P") {
+        run_pendulum();
+        return;
+    }
     if env::args().any(|a| a == "--analog-retro" || a == "-A") {
         run_analog(true);
         return;

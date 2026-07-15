@@ -650,17 +650,29 @@ fn render_pendulum_clock(w: usize, h: usize, hour12: f64, minute: f64, second: f
     fill_rect(&mut buf, w, h, bx0 + wf * 0.02, hf - wf * 0.03, wf * 0.12, wf * 0.03, WOOD_DK);
     fill_rect(&mut buf, w, h, bx0 + base_w - wf * 0.14, hf - wf * 0.03, wf * 0.12, wf * 0.03, WOOD_DK);
 
-    // Hood: full-width wood over the trunk top and pivot, with a bottom molding.
-    fill_rect(&mut buf, w, h, 0.0, 0.0, wf, hood_h, WOOD);
-    fill_rect(&mut buf, w, h, 0.0, hood_h - wf * 0.03, wf, wf * 0.03, WOOD_HI);
-
-    // Dial: a wooden frame ring, then the brass/cream face.
+    // Hood: a hexagonal wooden housing framing the dial, covering the trunk top
+    // and the pendulum pivot. Flat top and bottom edges, points at left/right.
     let dcx = wf / 2.0 - 0.5;
     let dcy = hood_h * 0.5;
-    let r_wood = hood_h * 0.47;
-    fill_disk(&mut buf, w, h, dcx, dcy, r_wood, WOOD_DK);
-    fill_disk(&mut buf, w, h, dcx, dcy, r_wood - wf * 0.018, WOOD_HI);
-    draw_retro_face(&mut buf, w, h, dcx, dcy, r_wood - wf * 0.04, hour12, minute, second);
+    let hex = |r: f64| -> [(f64, f64); 6] {
+        let mut v = [(0.0, 0.0); 6];
+        let mut i = 0;
+        while i < 6 {
+            let a = (30.0 + 60.0 * i as f64) * PI / 180.0;
+            v[i] = (dcx + r * a.sin(), dcy - r * a.cos());
+            i += 1;
+        }
+        v
+    };
+    let r_hex = wf * 0.49; // center-to-vertex; overall width ~0.98w
+    fill_poly(&mut buf, w, h, &hex(r_hex), WOOD_DK);
+    fill_poly(&mut buf, w, h, &hex(r_hex - wf * 0.015), WOOD_HI);
+    fill_poly(&mut buf, w, h, &hex(r_hex - wf * 0.04), WOOD);
+
+    // Round dial nested inside the hexagonal frame.
+    let r_face = r_hex * 0.866 - wf * 0.06;
+    fill_disk(&mut buf, w, h, dcx, dcy, r_face + wf * 0.02, WOOD_DK);
+    draw_retro_face(&mut buf, w, h, dcx, dcy, r_face, hour12, minute, second);
     buf
 }
 

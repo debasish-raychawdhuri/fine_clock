@@ -633,7 +633,7 @@ fn render_pendulum_clock(w: usize, h: usize, hour12: f64, minute: f64, second: f
     // Pendulum, swinging inside the cavity (pivot hidden behind the hood).
     let pivot_x = wf / 2.0;
     let pivot_y = trunk_top + wf * 0.03;
-    let rod_len = (trunk_bot - pivot_y) - wf * 0.12;
+    let rod_len = (trunk_bot - pivot_y) - wf * 0.20;
     let bx = pivot_x + rod_len * phase.sin();
     let by = pivot_y + rod_len * phase.cos();
     stroke_seg(&mut buf, w, h, pivot_x, pivot_y, bx, by, (wf * 0.011).max(2.0), BRASS);
@@ -796,6 +796,32 @@ fn run_analog(retro: bool) {
 /// High-frame-rate retro clock with a swinging pendulum. Redraws every frame
 /// (not once per second) with a smoothly sweeping second hand and pendulum,
 /// double-buffered for flicker-free updates. Shows a live FPS readout.
+/// Image aspect ratio (height / width) of the cased pendulum clock.
+const PENDULUM_ASPECT: f64 = 2.15;
+
+/// Probe the terminal and compute the largest clock image that fills it (keeping
+/// the aspect ratio), plus where to place it so the assembly is centered.
+/// Returns (w, h, img_cols, img_rows, col0, row0, cols).
+fn pendulum_layout() -> (usize, usize, usize, usize, usize, usize, u16) {
+    let (cols, rows, xpix, ypix) = term_size();
+    let avail_w = if xpix > 0 { xpix as usize } else { cols as usize * 10 };
+    let avail_h = if ypix > 0 { ypix as usize } else { rows as usize * 20 };
+    let cell_w = (avail_w / cols.max(1) as usize).max(1);
+    let cell_h = (avail_h / rows.max(1) as usize).max(1);
+    // Reserve two rows for the caption, then take the biggest image that fits
+    // both dimensions at our aspect ratio — i.e. fill the terminal.
+    let usable_h = avail_h.saturating_sub(2 * cell_h);
+    let w = avail_w.min((usable_h as f64 / PENDULUM_ASPECT) as usize).max(80);
+    let h = (w as f64 * PENDULUM_ASPECT) as usize;
+    let img_cols = w.div_ceil(cell_w);
+    let img_rows = h.div_ceil(cell_h);
+    let col0 = ((cols as usize).saturating_sub(img_cols)) / 2 + 1;
+    // Center the image (+caption) vertically so its center of gravity sits at
+    // the middle of the terminal.
+    let row0 = ((rows as usize).saturating_sub(img_rows + 1)) / 2 + 1;
+    (w, h, img_cols, img_rows, col0, row0.max(1), cols)
+}
+
 fn run_pendulum() {
     unsafe {
         libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
@@ -806,23 +832,11 @@ fn run_pendulum() {
     let _ = out.write_all(b"\x1b[?1049h\x1b[?25l");
     let _ = out.flush();
 
-    let (cols, rows, xpix, ypix) = term_size();
-    let avail_w = if xpix > 0 { xpix as usize } else { cols as usize * 10 };
-    let avail_h = if ypix > 0 { ypix as usize } else { rows as usize * 20 };
-    let cell_w = (avail_w / cols.max(1) as usize).max(1);
-    let cell_h = (avail_h / rows.max(1) as usize).max(1);
-    // The image is ~1.75x taller than wide (clock + pendulum). Cap the width so
-    // per-frame transmission stays light enough for a high frame rate.
-    let usable_h = avail_h.saturating_sub(2 * cell_h);
-    let w = avail_w.min((usable_h as f64 / 1.95) as usize).min(320).max(80);
-    let h = (w as f64 * 1.95) as usize;
-    let img_cols = w.div_ceil(cell_w);
-    let img_rows = h.div_ceil(cell_h);
-    let col0 = ((cols as usize).saturating_sub(img_cols)) / 2 + 1;
-    let row0 = 1;
+    let (mut w, mut h, _, mut img_rows, mut col0, mut row0, mut cols) = pendulum_layout();
 
     let start = std::time::Instant::now();
     let mut last = std::time::Instant::now();
+    let mut last_probe = std::time::Instant::now();
     let mut fps: f64 = 0.0;
     let mut cur_id: u32 = 0;
     let mut in_buf = [0u8; 16];
@@ -836,6 +850,21 @@ fn run_pendulum() {
         if let Ok(n) = stdin.read(&mut in_buf) {
             if in_buf[..n].iter().any(|&b| b == b'q' || b == b'Q' || b == 0x03) {
                 break;
+            }
+        }
+
+        // Re-probe the terminal once a second so the clock tracks resizes.
+        if last_probe.elapsed().as_secs_f64() >= 1.0 {
+            last_probe = std::time::Instant::now();
+            let (nw, nh, _, nir, ncol0, nrow0, ncols) = pendulum_layout();
+            if (nw, nh, ncol0, nrow0, ncols) != (w, h, col0, row0, cols) {
+                if cur_id != 0 {
+                    kitty_delete(&mut out, cur_id);
+                    cur_id = 0;
+                }
+                let _ = out.write_all(b"\x1b[2J");
+                w = nw; h = nh; img_rows = nir;
+                col0 = ncol0; row0 = nrow0; cols = ncols;
             }
         }
 

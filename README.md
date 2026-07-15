@@ -90,8 +90,10 @@ A cased grandfather-style clock: a hexagonal wooden hood frames the retro brass 
 a narrower trunk below houses a **swinging brass pendulum** in a dark cavity,
 over a plinth base with feet. The pendulum swings smoothly at a high frame rate
 (~60 fps cap) while the second hand ticks once per second like a real clock.
-Each frame is uploaded off-screen and swapped in via double buffering, so it
-stays flicker-free. A live FPS readout is shown under the clock. Needs a
+The clock is sized to fill the terminal and centered in it; it re-probes the
+terminal size every second, so it re-fits when you resize the window. Each frame
+is uploaded off-screen and swapped in via double buffering, so it stays
+flicker-free. A live FPS readout is shown under the clock. Needs a
 kitty-graphics terminal.
 
 ## Dependencies

@@ -203,7 +203,7 @@ fn draw_clock(time_str: &str, date_str: &str, style: Style) {
     let total_width = 6 * digit_w + 5 * GAP + 2 * (colon_w + 2 * GAP);
 
     if max_y < height + 4 || max_x < total_width {
-        ncurses::mvaddstr(0, 0, "Terminal too small!");
+        let _ = ncurses::mvaddstr(0, 0, "Terminal too small!");
         ncurses::refresh();
         return;
     }
@@ -227,7 +227,7 @@ fn draw_clock(time_str: &str, date_str: &str, style: Style) {
                 if has_colors {
                     ncurses::attron(ncurses::COLOR_PAIR(2));
                 }
-                ncurses::mvaddstr(start_y as i32 + row as i32, x as i32, line);
+                let _ = ncurses::mvaddstr(start_y as i32 + row as i32, x as i32, line);
                 if has_colors {
                     ncurses::attroff(ncurses::COLOR_PAIR(2));
                 }
@@ -242,7 +242,7 @@ fn draw_clock(time_str: &str, date_str: &str, style: Style) {
                 if has_colors {
                     ncurses::attron(ncurses::COLOR_PAIR(color));
                 }
-                ncurses::mvaddstr(start_y as i32 + row as i32, x as i32, line);
+                let _ = ncurses::mvaddstr(start_y as i32 + row as i32, x as i32, line);
                 if has_colors {
                     ncurses::attroff(ncurses::COLOR_PAIR(color));
                 }
@@ -256,7 +256,7 @@ fn draw_clock(time_str: &str, date_str: &str, style: Style) {
     if has_colors {
         ncurses::attron(ncurses::COLOR_PAIR(5));
     }
-    ncurses::mvaddstr(date_y as i32, date_x as i32, date_str);
+    let _ = ncurses::mvaddstr(date_y as i32, date_x as i32, date_str);
     if has_colors {
         ncurses::attroff(ncurses::COLOR_PAIR(5));
     }
@@ -266,7 +266,7 @@ fn draw_clock(time_str: &str, date_str: &str, style: Style) {
     if has_colors {
         ncurses::attron(ncurses::COLOR_PAIR(6));
     }
-    ncurses::mvaddstr(start_y as i32 - 2, title_x as i32, title);
+    let _ = ncurses::mvaddstr(start_y as i32 - 2, title_x as i32, title);
     if has_colors {
         ncurses::attroff(ncurses::COLOR_PAIR(6));
     }
@@ -715,8 +715,8 @@ fn kitty_delete(out: &mut impl Write, id: u32) {
 
 fn run_analog(retro: bool) {
     unsafe {
-        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
     }
     let orig = set_raw();
     let mut out = std::io::stdout();
@@ -828,8 +828,8 @@ fn pendulum_layout() -> (usize, usize, usize, usize, usize, usize, u16) {
 
 fn run_pendulum() {
     unsafe {
-        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
     }
     let orig = set_raw();
     let mut out = std::io::stdout();

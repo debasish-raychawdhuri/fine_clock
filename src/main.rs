@@ -428,6 +428,163 @@ fn render_analog(size: usize, hour12: f64, minute: f64, second: f64) -> Vec<u8> 
     buf
 }
 
+/// True if (px,py) is inside the convex polygon `pts` (consistent winding).
+fn point_in_convex(px: f64, py: f64, pts: &[(f64, f64)]) -> bool {
+    let n = pts.len();
+    let mut sign: i32 = 0;
+    for i in 0..n {
+        let (ax, ay) = pts[i];
+        let (bx, by) = pts[(i + 1) % n];
+        let cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+        let s = if cross > 0.0 { 1 } else if cross < 0.0 { -1 } else { 0 };
+        if s != 0 {
+            if sign == 0 {
+                sign = s;
+            } else if s != sign {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn fill_poly(buf: &mut [u8], w: usize, h: usize, pts: &[(f64, f64)], c: (u8, u8, u8, u8)) {
+    let mut minx = f64::MAX;
+    let mut miny = f64::MAX;
+    let mut maxx = f64::MIN;
+    let mut maxy = f64::MIN;
+    for &(x, y) in pts {
+        minx = minx.min(x);
+        miny = miny.min(y);
+        maxx = maxx.max(x);
+        maxy = maxy.max(y);
+    }
+    let x0 = minx.floor().max(0.0) as i32;
+    let x1 = (maxx.ceil()).min(w as f64) as i32;
+    let y0 = miny.floor().max(0.0) as i32;
+    let y1 = (maxy.ceil()).min(h as f64) as i32;
+    let mut y = y0;
+    while y < y1 {
+        let mut x = x0;
+        while x < x1 {
+            if point_in_convex(x as f64 + 0.5, y as f64 + 0.5, pts) {
+                put(buf, w, h, x, y, c);
+            }
+            x += 1;
+        }
+        y += 1;
+    }
+}
+
+/// A tapered "lozenge" clock hand: a diamond from a short tail, through a wide
+/// mid-point, to a pointed tip.
+fn hand_poly(cx: f64, cy: f64, angle: f64, len: f64, hw: f64, tail: f64) -> [(f64, f64); 4] {
+    let (dx, dy) = (angle.sin(), -angle.cos());
+    let (px, py) = (angle.cos(), angle.sin());
+    let base = (cx - dx * tail, cy - dy * tail);
+    let tip = (cx + dx * len, cy + dy * len);
+    let mx = cx + dx * len * 0.32;
+    let my = cy + dy * len * 0.32;
+    [base, (mx + px * hw, my + py * hw), tip, (mx - px * hw, my - py * hw)]
+}
+
+/// Draw one Roman-numeral character (I, V, X) upright in the box whose top-left
+/// is (tx,ty) with the given width/height, using straight strokes.
+fn roman_char(buf: &mut [u8], w: usize, h: usize, ch: u8, tx: f64, ty: f64, cw: f64, hg: f64, th: f64, c: (u8, u8, u8, u8)) {
+    match ch {
+        b'I' => stroke_seg(buf, w, h, tx + cw / 2.0, ty, tx + cw / 2.0, ty + hg, th, c),
+        b'V' => {
+            stroke_seg(buf, w, h, tx, ty, tx + cw / 2.0, ty + hg, th, c);
+            stroke_seg(buf, w, h, tx + cw, ty, tx + cw / 2.0, ty + hg, th, c);
+        }
+        b'X' => {
+            stroke_seg(buf, w, h, tx, ty, tx + cw, ty + hg, th, c);
+            stroke_seg(buf, w, h, tx + cw, ty, tx, ty + hg, th, c);
+        }
+        _ => {}
+    }
+}
+
+/// Draw a Roman numeral centered at (ccx,ccy).
+fn draw_roman(buf: &mut [u8], w: usize, h: usize, s: &[u8], ccx: f64, ccy: f64, hg: f64, c: (u8, u8, u8, u8)) {
+    let cw = hg * 0.5;
+    let gap = hg * 0.14;
+    let total = s.len() as f64 * cw + (s.len() as f64 - 1.0) * gap;
+    let th = (hg * 0.14).max(1.5);
+    let mut tx = ccx - total / 2.0;
+    let ty = ccy - hg / 2.0;
+    for &ch in s {
+        roman_char(buf, w, h, ch, tx, ty, cw, hg, th, c);
+        tx += cw + gap;
+    }
+}
+
+/// Retro variant: warm ivory dial, brass double-bezel, black baton markers,
+/// Roman numerals at the cardinals, tapered hands, and a red second hand with
+/// a counterweight.
+fn render_analog_retro(size: usize, hour12: f64, minute: f64, second: f64) -> Vec<u8> {
+    let (w, h) = (size, size);
+    let mut buf = vec![0u8; w * h * 4];
+    let cx = w as f64 / 2.0 - 0.5;
+    let cy = h as f64 / 2.0 - 0.5;
+    let r = size as f64 / 2.0 - 2.0;
+
+    const BRONZE: (u8, u8, u8, u8) = (94, 66, 28, 255);
+    const BRASS: (u8, u8, u8, u8) = (198, 152, 74, 255);
+    const CREAM: (u8, u8, u8, u8) = (238, 229, 203, 255);
+    const INK: (u8, u8, u8, u8) = (34, 28, 22, 255);
+    const VINTAGE_RED: (u8, u8, u8, u8) = (168, 44, 32, 255);
+
+    // Brass double bezel over a cream dial.
+    fill_disk(&mut buf, w, h, cx, cy, r, BRONZE);
+    fill_disk(&mut buf, w, h, cx, cy, r - 2.0, BRASS);
+    fill_disk(&mut buf, w, h, cx, cy, r - size as f64 * 0.035, CREAM);
+    // Aged patina: a couple of faint rings near the rim.
+    stroke_ring(&mut buf, w, h, cx, cy, r - size as f64 * 0.05, 1.0, (150, 130, 95, 90));
+    stroke_ring(&mut buf, w, h, cx, cy, r * 0.30, 1.0, (150, 130, 95, 70));
+
+    // Minute track.
+    let rim = r - size as f64 * 0.05;
+    for i in 0..60 {
+        if i % 5 == 0 {
+            continue;
+        }
+        let a = i as f64 / 60.0 * 2.0 * PI;
+        stroke_seg(&mut buf, w, h, cx + (rim - size as f64 * 0.02) * a.sin(), cy - (rim - size as f64 * 0.02) * a.cos(), cx + rim * a.sin(), cy - rim * a.cos(), (size as f64 * 0.006).max(1.0), INK);
+    }
+
+    // Hours: Roman numerals at the cardinals, bold batons elsewhere.
+    let numerals: [&[u8]; 12] = [b"XII", b"I", b"II", b"III", b"IIII", b"V", b"VI", b"VII", b"VIII", b"IX", b"X", b"XI"];
+    for i in 0..12 {
+        let a = i as f64 / 12.0 * 2.0 * PI;
+        if i % 3 == 0 {
+            let rn = r * 0.74;
+            draw_roman(&mut buf, w, h, numerals[i], cx + rn * a.sin(), cy - rn * a.cos(), size as f64 * 0.10, INK);
+        } else {
+            let outer = rim - size as f64 * 0.02;
+            let inner = outer - size as f64 * 0.06;
+            stroke_seg(&mut buf, w, h, cx + inner * a.sin(), cy - inner * a.cos(), cx + outer * a.sin(), cy - outer * a.cos(), size as f64 * 0.022, INK);
+        }
+    }
+
+    // Hands.
+    let ha = (hour12 + minute / 60.0) / 12.0 * 2.0 * PI;
+    let ma = (minute + second / 60.0) / 60.0 * 2.0 * PI;
+    let sa = second / 60.0 * 2.0 * PI;
+    fill_poly(&mut buf, w, h, &hand_poly(cx, cy, ha, r * 0.52, size as f64 * 0.028, size as f64 * 0.06), INK);
+    fill_poly(&mut buf, w, h, &hand_poly(cx, cy, ma, r * 0.76, size as f64 * 0.020, size as f64 * 0.06), INK);
+    // Second hand: thin, with a counterweight tail.
+    let (sdx, sdy) = (sa.sin(), -sa.cos());
+    stroke_seg(&mut buf, w, h, cx - sdx * r * 0.16, cy - sdy * r * 0.16, cx + sdx * r * 0.84, cy + sdy * r * 0.84, (size as f64 * 0.008).max(1.5), VINTAGE_RED);
+    fill_disk(&mut buf, w, h, cx - sdx * r * 0.16, cy - sdy * r * 0.16, size as f64 * 0.02, VINTAGE_RED);
+
+    // Hub.
+    fill_disk(&mut buf, w, h, cx, cy, size as f64 * 0.028, INK);
+    fill_disk(&mut buf, w, h, cx, cy, size as f64 * 0.012, BRASS);
+
+    buf
+}
+
 /// Transmit an RGBA image via the kitty graphics protocol and display it at the
 /// cursor's current position (replacing any prior frame of image id 1).
 /// Upload an RGBA image to the terminal WITHOUT displaying it (a=t). This is
@@ -461,7 +618,7 @@ fn kitty_delete(out: &mut impl Write, id: u32) {
     let _ = write!(out, "\x1b_Ga=d,d=i,i={},q=2\x1b\\", id);
 }
 
-fn run_analog() {
+fn run_analog(retro: bool) {
     unsafe {
         libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
         libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
@@ -508,7 +665,11 @@ fn run_analog() {
             let row0 = ((rows as usize).saturating_sub(img_rows + 2)) / 2 + 1;
 
             let hour12 = (now.hour() % 12) as f64;
-            let rgba = render_analog(size, hour12, now.minute() as f64, now.second() as f64);
+            let rgba = if retro {
+                render_analog_retro(size, hour12, now.minute() as f64, now.second() as f64)
+            } else {
+                render_analog(size, hour12, now.minute() as f64, now.second() as f64)
+            };
 
             // Double-buffered swap: upload the next frame off-screen (a=t),
             // then position and display it (a=p) and delete the old one. The
@@ -542,8 +703,12 @@ fn run_analog() {
 }
 
 fn main() {
+    if env::args().any(|a| a == "--analog-retro" || a == "-A") {
+        run_analog(true);
+        return;
+    }
     if env::args().any(|a| a == "--analog" || a == "-a") {
-        run_analog();
+        run_analog(false);
         return;
     }
 

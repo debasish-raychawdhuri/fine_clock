@@ -77,6 +77,13 @@ minute, and red second hands, updated every second. Requires a terminal that
 supports the kitty graphics protocol (kitty, Ghostty, WezTerm, Konsole, …).
 Unlike the text styles, this mode bypasses ncurses and renders directly.
 
+### Analog — retro (`--analog-retro` / `-A`)
+
+The same graphical clock with a vintage look: a warm ivory dial inside a brass
+double-bezel, Roman numerals at the cardinals with bold baton markers elsewhere,
+tapered black hands, and a red second hand with a counterweight. Also drawn with
+the kitty graphics protocol.
+
 ## Dependencies
 
 - Rust (1.85+, edition 2024)

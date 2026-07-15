@@ -1,7 +1,10 @@
 use std::env;
 use std::ffi::CString;
+use std::io::{Read, Write};
+use std::f64::consts::PI;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::Local;
+use chrono::{Local, Timelike};
 
 const DIGIT_HEIGHT: usize = 7;
 
@@ -271,7 +274,279 @@ fn draw_clock(time_str: &str, date_str: &str, style: Style) {
     ncurses::refresh();
 }
 
+// ===================== Analog mode (graphical, kitty graphics) =====================
+
+static RUNNING: AtomicBool = AtomicBool::new(true);
+
+extern "C" fn on_signal(_sig: libc::c_int) {
+    RUNNING.store(false, Ordering::SeqCst);
+}
+
+/// (cols, rows, x_pixels, y_pixels) of the terminal; pixels are 0 if unknown.
+fn term_size() -> (u16, u16, u16, u16) {
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws);
+        (ws.ws_col, ws.ws_row, ws.ws_xpixel, ws.ws_ypixel)
+    }
+}
+
+fn set_raw() -> libc::termios {
+    unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        libc::tcgetattr(libc::STDIN_FILENO, &mut t);
+        let orig = t;
+        // Non-canonical, no echo, but keep ISIG so SIGINT reaches our handler.
+        t.c_lflag &= !(libc::ICANON | libc::ECHO);
+        t.c_cc[libc::VMIN] = 0;
+        t.c_cc[libc::VTIME] = 0;
+        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t);
+        orig
+    }
+}
+
+fn restore_term(orig: &libc::termios) {
+    unsafe {
+        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, orig);
+    }
+}
+
+fn b64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        out.push(T[(b0 >> 2) as usize] as char);
+        out.push(T[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 { T[(((b1 & 0b1111) << 2) | (b2 >> 6)) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[(b2 & 0b111111) as usize] as char } else { '=' });
+    }
+    out
+}
+
+#[inline]
+fn put(buf: &mut [u8], w: usize, h: usize, x: i32, y: i32, c: (u8, u8, u8, u8)) {
+    if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
+        return;
+    }
+    let idx = (y as usize * w + x as usize) * 4;
+    buf[idx] = c.0;
+    buf[idx + 1] = c.1;
+    buf[idx + 2] = c.2;
+    buf[idx + 3] = c.3;
+}
+
+fn fill_disk(buf: &mut [u8], w: usize, h: usize, cx: f64, cy: f64, r: f64, c: (u8, u8, u8, u8)) {
+    let r2 = r * r;
+    let y0 = (cy - r).floor().max(0.0) as i32;
+    let y1 = (cy + r).ceil().min(h as f64) as i32;
+    let x0 = (cx - r).floor().max(0.0) as i32;
+    let x1 = (cx + r).ceil().min(w as f64) as i32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let dx = x as f64 - cx;
+            let dy = y as f64 - cy;
+            if dx * dx + dy * dy <= r2 {
+                put(buf, w, h, x, y, c);
+            }
+        }
+    }
+}
+
+fn stroke_ring(buf: &mut [u8], w: usize, h: usize, cx: f64, cy: f64, r: f64, th: f64, c: (u8, u8, u8, u8)) {
+    let outer = r + th / 2.0;
+    let y0 = (cy - outer).floor().max(0.0) as i32;
+    let y1 = (cy + outer).ceil().min(h as f64) as i32;
+    let x0 = (cx - outer).floor().max(0.0) as i32;
+    let x1 = (cx + outer).ceil().min(w as f64) as i32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let d = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt();
+            if (d - r).abs() <= th / 2.0 {
+                put(buf, w, h, x, y, c);
+            }
+        }
+    }
+}
+
+fn stroke_seg(buf: &mut [u8], w: usize, h: usize, x0: f64, y0: f64, x1: f64, y1: f64, th: f64, c: (u8, u8, u8, u8)) {
+    let minx = (x0.min(x1) - th).floor().max(0.0) as i32;
+    let maxx = (x0.max(x1) + th).ceil().min(w as f64) as i32;
+    let miny = (y0.min(y1) - th).floor().max(0.0) as i32;
+    let maxy = (y0.max(y1) + th).ceil().min(h as f64) as i32;
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let l2 = dx * dx + dy * dy;
+    for y in miny..maxy {
+        for x in minx..maxx {
+            let px = x as f64;
+            let py = y as f64;
+            let t = if l2 == 0.0 { 0.0 } else { (((px - x0) * dx + (py - y0) * dy) / l2).clamp(0.0, 1.0) };
+            let d = ((px - (x0 + t * dx)).powi(2) + (py - (y0 + t * dy)).powi(2)).sqrt();
+            if d <= th / 2.0 {
+                put(buf, w, h, x, y, c);
+            }
+        }
+    }
+}
+
+/// Rasterize the clock face + hands to an RGBA buffer (transparent background).
+fn render_analog(size: usize, hour12: f64, minute: f64, second: f64) -> Vec<u8> {
+    let (w, h) = (size, size);
+    let mut buf = vec![0u8; w * h * 4]; // transparent
+    let cx = w as f64 / 2.0 - 0.5;
+    let cy = h as f64 / 2.0 - 0.5;
+    let r = size as f64 / 2.0 - 3.0;
+
+    fill_disk(&mut buf, w, h, cx, cy, r, (24, 24, 34, 255)); // face
+    stroke_ring(&mut buf, w, h, cx, cy, r, 3.0, (210, 210, 225, 255)); // bezel
+
+    // Tick marks: long/bright every 5, short/dim otherwise.
+    for i in 0..60 {
+        let a = i as f64 / 60.0 * 2.0 * PI;
+        let major = i % 5 == 0;
+        let (inner, th, col) = if major {
+            (r - 18.0, 3.0, (235, 235, 245, 255))
+        } else {
+            (r - 9.0, 1.5, (110, 110, 130, 255))
+        };
+        let outer = r - 5.0;
+        stroke_seg(&mut buf, w, h, cx + inner * a.sin(), cy - inner * a.cos(), cx + outer * a.sin(), cy - outer * a.cos(), th, col);
+    }
+
+    // Hands.
+    let ha = (hour12 + minute / 60.0) / 12.0 * 2.0 * PI;
+    let ma = (minute + second / 60.0) / 60.0 * 2.0 * PI;
+    let sa = second / 60.0 * 2.0 * PI;
+    stroke_seg(&mut buf, w, h, cx, cy, cx + r * 0.50 * ha.sin(), cy - r * 0.50 * ha.cos(), 7.0, (0, 200, 255, 255)); // hour: cyan
+    stroke_seg(&mut buf, w, h, cx, cy, cx + r * 0.72 * ma.sin(), cy - r * 0.72 * ma.cos(), 4.5, (0, 220, 90, 255)); // minute: green
+    stroke_seg(&mut buf, w, h, cx, cy, cx + r * 0.82 * sa.sin(), cy - r * 0.82 * sa.cos(), 2.0, (255, 70, 70, 255)); // second: red
+    fill_disk(&mut buf, w, h, cx, cy, 5.0, (255, 255, 255, 255)); // hub
+
+    buf
+}
+
+/// Transmit an RGBA image via the kitty graphics protocol and display it at the
+/// cursor's current position (replacing any prior frame of image id 1).
+/// Upload an RGBA image to the terminal WITHOUT displaying it (a=t). This is
+/// the "prerender into the buffer" step — the heavy transmission happens with
+/// nothing changing on screen. `q=2` suppresses OK/error replies (which would
+/// otherwise land on our stdin). Display it later with `kitty_put`.
+fn kitty_upload(out: &mut impl Write, rgba: &[u8], w: usize, h: usize, id: u32) {
+    let payload = b64(rgba);
+    let bytes = payload.as_bytes();
+    let chunks: Vec<&[u8]> = bytes.chunks(4096).collect();
+    for (i, ch) in chunks.iter().enumerate() {
+        let m = if i == chunks.len() - 1 { 0 } else { 1 };
+        if i == 0 {
+            let _ = write!(out, "\x1b_Gi={},a=t,f=32,t=d,q=2,s={},v={},m={};", id, w, h, m);
+        } else {
+            let _ = write!(out, "\x1b_Gm={};", m);
+        }
+        let _ = out.write_all(ch);
+        let _ = out.write_all(b"\x1b\\");
+    }
+}
+
+/// Display an already-uploaded image at the cursor (a=p). Instant — the pixels
+/// are already in the terminal, so this is the flicker-free swap.
+fn kitty_put(out: &mut impl Write, id: u32) {
+    let _ = write!(out, "\x1b_Gi={},a=p,q=2\x1b\\", id);
+}
+
+/// Delete an image and its placements by id.
+fn kitty_delete(out: &mut impl Write, id: u32) {
+    let _ = write!(out, "\x1b_Ga=d,d=i,i={},q=2\x1b\\", id);
+}
+
+fn run_analog() {
+    unsafe {
+        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
+    }
+    let orig = set_raw();
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x1b[?1049h\x1b[?25l"); // alt screen, hide cursor
+    let _ = out.flush();
+
+    let mut last_second = u32::MAX;
+    let mut in_buf = [0u8; 16];
+    let mut stdin = std::io::stdin();
+    // Double buffer: alternate between two image ids so we can upload the next
+    // frame off-screen, then swap it in. 0 means "nothing shown yet".
+    let mut cur_id: u32 = 0;
+
+    while RUNNING.load(Ordering::SeqCst) {
+        // Quit on q / Q / Ctrl-C. NOT bare ESC: terminal replies (e.g. the
+        // kitty-graphics "OK" acknowledgement, cursor-position reports) begin
+        // with ESC and would otherwise look like a quit keypress.
+        if let Ok(n) = stdin.read(&mut in_buf) {
+            if in_buf[..n].iter().any(|&b| b == b'q' || b == b'Q' || b == 0x03) {
+                break;
+            }
+        }
+
+        let now = Local::now();
+        if now.second() != last_second {
+            last_second = now.second();
+
+            let (cols, rows, xpix, ypix) = term_size();
+            let avail_w = if xpix > 0 { xpix as usize } else { cols as usize * 10 };
+            let avail_h = if ypix > 0 { ypix as usize } else { rows as usize * 20 };
+            let cell_w = (avail_w / cols.max(1) as usize).max(1);
+            let cell_h = (avail_h / rows.max(1) as usize).max(1);
+            // Leave a couple of rows for the date caption.
+            let size = ((avail_w.min(avail_h.saturating_sub(2 * cell_h)) as f64) * 0.9)
+                .min(700.0) as usize;
+            let size = size.max(64);
+
+            let img_cols = size.div_ceil(cell_w);
+            let img_rows = size.div_ceil(cell_h);
+            let col0 = ((cols as usize).saturating_sub(img_cols)) / 2 + 1;
+            let row0 = ((rows as usize).saturating_sub(img_rows + 2)) / 2 + 1;
+
+            let hour12 = (now.hour() % 12) as f64;
+            let rgba = render_analog(size, hour12, now.minute() as f64, now.second() as f64);
+
+            // Double-buffered swap: upload the next frame off-screen (a=t),
+            // then position and display it (a=p) and delete the old one. The
+            // slow transmission happens with nothing changing on screen, so the
+            // visible update is instant — no flicker.
+            let next_id = if cur_id == 1 { 2 } else { 1 };
+            kitty_upload(&mut out, &rgba, size, size, next_id);
+            let _ = write!(out, "\x1b[{};{}H", row0, col0);
+            kitty_put(&mut out, next_id);
+            if cur_id != 0 {
+                kitty_delete(&mut out, cur_id);
+            }
+            cur_id = next_id;
+
+            // Date caption, centered below the clock (clear the line first so a
+            // shorter day/month name doesn't leave stragglers).
+            let date = now.format("%A, %B %d, %Y").to_string();
+            let date_col = ((cols as usize).saturating_sub(date.chars().count())) / 2 + 1;
+            let date_row = row0 + img_rows + 1;
+            let _ = write!(out, "\x1b[{};1H\x1b[2K\x1b[{};{}H\x1b[35m{}\x1b[0m", date_row, date_row, date_col, date);
+            let _ = out.flush();
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Teardown: delete images, show cursor, leave alt screen, restore tty.
+    let _ = out.write_all(b"\x1b_Ga=d,d=A\x1b\\\x1b[?25h\x1b[?1049l");
+    let _ = out.flush();
+    restore_term(&orig);
+}
+
 fn main() {
+    if env::args().any(|a| a == "--analog" || a == "-a") {
+        run_analog();
+        return;
+    }
+
     let style = if env::args().any(|a| a == "--double" || a == "-d") {
         Style::Double
     } else if env::args().any(|a| a == "--fancy" || a == "-f") {

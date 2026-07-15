@@ -69,6 +69,14 @@ Uses Unicode double-line box-drawing characters (`╔═╗║╚╝╠╣`) for
                                 Sunday, March 08, 2026
 ```
 
+### Analog (`--analog` / `-a`)
+
+A graphical analog clock drawn with the **kitty graphics protocol** (an actual
+rasterized image, not text): a round face with tick marks and cyan hour, green
+minute, and red second hands, updated every second. Requires a terminal that
+supports the kitty graphics protocol (kitty, Ghostty, WezTerm, Konsole, …).
+Unlike the text styles, this mode bypasses ncurses and renders directly.
+
 ## Dependencies
 
 - Rust (1.85+, edition 2024)
